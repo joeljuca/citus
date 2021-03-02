@@ -24,9 +24,6 @@ SELECT count(*) FROM contestant;
 -- Should fail: unlogged tables not supported
 CREATE UNLOGGED TABLE columnar_unlogged(i int) USING columnar;
 
--- Should fail: temporary tables not supported
-CREATE TEMPORARY TABLE columnar_temp(i int) USING columnar;
-
 --
 -- Utility functions to be used throughout tests
 --
@@ -71,3 +68,40 @@ WITH a as (
 )
 SELECT (SELECT count(*) = 0 FROM c) AND
        (SELECT count(*) = 0 FROM f) as consistent;
+
+-- test temporary columnar tables
+
+-- store columnar.stripe for further checking
+SELECT * INTO old_columnar_stripe FROM columnar.stripe;
+
+-- Should work: temporary tables are supported
+CREATE TEMPORARY TABLE columnar_temp(i int) USING columnar;
+
+-- reserve some chunks and a stripe
+INSERT INTO columnar_temp SELECT i FROM generate_series(1,5) i;
+
+\c - - - :master_port
+
+-- show that temporary table itself and it's metadata is removed
+SELECT COUNT(*)=0 FROM pg_class WHERE relname='columnar_temp';
+SELECT COUNT(*)=0 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
+
+-- connect to another session and create a temp table with same name
+CREATE TEMPORARY TABLE columnar_temp(i int) USING columnar;
+
+-- reserve some chunks and a stripe
+INSERT INTO columnar_temp SELECT i FROM generate_series(1,5) i;
+
+-- test basic select
+SELECT COUNT(*) FROM columnar_temp WHERE i < 5;
+
+BEGIN;
+  DROP TABLE columnar_temp;
+  -- show that we drop stripes properly
+  SELECT COUNT(*)=0 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
+ROLLBACK;
+
+-- make sure that table is not dropped yet since we rollbacked above xact
+SELECT COUNT(*)=1 FROM pg_class WHERE relname='columnar_temp';
+-- show that we preserve the stripe of the temp columanar table after rollback
+SELECT COUNT(*)=1 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
