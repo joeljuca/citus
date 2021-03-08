@@ -95,6 +95,10 @@ static Oid ColumnarChunkGroupRelationId(void);
 static Oid ColumnarChunkIndexRelationId(void);
 static Oid ColumnarChunkGroupIndexRelationId(void);
 static Oid ColumnarNamespaceId(void);
+static void DeleteStorageFromColumnarMetadataTable(Oid metadataTableId,
+												   uint64 storageId);
+static AttrNumber ColumnarMetadataTableGetStorageIdAtrrNum(Oid columnarMetadataTableId);
+static Oid ColumnarMetadataTableGetStorageIdIndexId(Oid columnarMetadataTableId);
 static ModifyState * StartModifyRelation(Relation rel);
 static void InsertTupleAndEnforceConstraints(ModifyState *state, Datum *values,
 											 bool *nulls);
@@ -951,13 +955,12 @@ ReadDataFileStripeList(uint64 storageId, Snapshot snapshot)
 
 
 /*
- * DeleteMetadataRows removes the rows with given relfilenode from columnar.stripe.
+ * DeleteMetadataRows removes the rows with given relfilenode from columnar
+ * metadata tables.
  */
 void
 DeleteMetadataRows(RelFileNode relfilenode)
 {
-	ScanKeyData scanKey[1];
-
 	/*
 	 * During a restore for binary upgrade, metadata tables and indexes may or
 	 * may not exist.
@@ -977,23 +980,42 @@ DeleteMetadataRows(RelFileNode relfilenode)
 		return;
 	}
 
-	ScanKeyInit(&scanKey[0], Anum_columnar_stripe_storageid,
-				BTEqualStrategyNumber, F_INT8EQ, UInt64GetDatum(metapage->storageId));
+	DeleteStorageFromColumnarMetadataTable(ColumnarStripeRelationId(),
+										   metapage->storageId);
+	DeleteStorageFromColumnarMetadataTable(ColumnarChunkGroupRelationId(),
+										   metapage->storageId);
+	DeleteStorageFromColumnarMetadataTable(ColumnarChunkRelationId(),
+										   metapage->storageId);
+}
 
-	Oid columnarStripesOid = ColumnarStripeRelationId();
-	Relation columnarStripes = try_relation_open(columnarStripesOid, AccessShareLock);
-	if (columnarStripes == NULL)
+
+/*
+ * DeleteStorageFromColumnarMetadataTable removes the rows with given
+ * storageId from given columnar metadata table.
+ */
+static void
+DeleteStorageFromColumnarMetadataTable(Oid metadataTableId, uint64 storageId)
+{
+	ScanKeyData scanKey[1];
+	AttrNumber storageIdAtrrNumber =
+		ColumnarMetadataTableGetStorageIdAtrrNum(metadataTableId);
+	ScanKeyInit(&scanKey[0], storageIdAtrrNumber, BTEqualStrategyNumber,
+				F_INT8EQ, UInt64GetDatum(storageId));
+
+	Relation metadataTable = try_relation_open(metadataTableId, AccessShareLock);
+	if (metadataTable == NULL)
 	{
 		/* extension has been dropped */
 		return;
 	}
 
-	Relation index = index_open(ColumnarStripeIndexRelationId(), AccessShareLock);
+	Oid storageIdIndexId = ColumnarMetadataTableGetStorageIdIndexId(metadataTableId);
+	Relation index = index_open(storageIdIndexId, AccessShareLock);
 
-	SysScanDesc scanDescriptor = systable_beginscan_ordered(columnarStripes, index, NULL,
+	SysScanDesc scanDescriptor = systable_beginscan_ordered(metadataTable, index, NULL,
 															1, scanKey);
 
-	ModifyState *modifyState = StartModifyRelation(columnarStripes);
+	ModifyState *modifyState = StartModifyRelation(metadataTable);
 
 	HeapTuple heapTuple = systable_getnext(scanDescriptor);
 	while (HeapTupleIsValid(heapTuple))
@@ -1007,7 +1029,61 @@ DeleteMetadataRows(RelFileNode relfilenode)
 	FinishModifyRelation(modifyState);
 
 	index_close(index, AccessShareLock);
-	table_close(columnarStripes, AccessShareLock);
+	table_close(metadataTable, AccessShareLock);
+}
+
+
+/*
+ * ColumnarMetadataTableGetStorageIdAtrrNum returns attribute number for
+ * storageId column for given columnar metadata table.
+ */
+static AttrNumber
+ColumnarMetadataTableGetStorageIdAtrrNum(Oid columnarMetadataTableId)
+{
+	if (columnarMetadataTableId == ColumnarStripeRelationId())
+	{
+		return Anum_columnar_stripe_storageid;
+	}
+	else if (columnarMetadataTableId == ColumnarChunkGroupRelationId())
+	{
+		return Anum_columnar_chunkgroup_storageid;
+	}
+	else if (columnarMetadataTableId == ColumnarChunkRelationId())
+	{
+		return Anum_columnar_chunk_storageid;
+	}
+	else
+	{
+		/* not expected but be on the safe side */
+		ereport(ERROR, (errmsg("unexpected columnar metadata table")));
+	}
+}
+
+
+/*
+ * ColumnarMetadataTableGetStorageIdIndexId returns oid of the index relation
+ * that covers storageId column of given columnar metadata table.
+ */
+static Oid
+ColumnarMetadataTableGetStorageIdIndexId(Oid columnarMetadataTableId)
+{
+	if (columnarMetadataTableId == ColumnarStripeRelationId())
+	{
+		return ColumnarStripeIndexRelationId();
+	}
+	else if (columnarMetadataTableId == ColumnarChunkGroupRelationId())
+	{
+		return ColumnarChunkGroupIndexRelationId();
+	}
+	else if (columnarMetadataTableId == ColumnarChunkRelationId())
+	{
+		return ColumnarChunkIndexRelationId();
+	}
+	else
+	{
+		/* not expected but be on the safe side */
+		ereport(ERROR, (errmsg("unexpected columnar metadata table")));
+	}
 }
 
 
@@ -1057,19 +1133,13 @@ InsertTupleAndEnforceConstraints(ModifyState *state, Datum *values, bool *nulls)
 
 /*
  * DeleteTupleAndEnforceConstraints deletes a tuple from a relation and
- * makes sure constraints (e.g. FK constraints) are enforced.
+ * makes sure constraints are enforced.
  */
 static void
 DeleteTupleAndEnforceConstraints(ModifyState *state, HeapTuple heapTuple)
 {
-	EState *estate = state->estate;
-	ResultRelInfo *resultRelInfo = estate->es_result_relation_info;
-
 	ItemPointer tid = &(heapTuple->t_self);
 	simple_heap_delete(state->rel, tid);
-
-	/* execute AFTER ROW DELETE Triggers to enforce constraints */
-	ExecARDeleteTriggers(estate, resultRelInfo, tid, NULL, NULL);
 }
 
 
@@ -1081,7 +1151,6 @@ FinishModifyRelation(ModifyState *state)
 {
 	ExecCloseIndices(state->estate->es_result_relation_info);
 
-	AfterTriggerEndQuery(state->estate);
 	ExecCleanUpTriggerState(state->estate);
 	ExecResetTupleTable(state->estate->es_tupleTable, false);
 	FreeExecutorState(state->estate);
@@ -1092,8 +1161,8 @@ FinishModifyRelation(ModifyState *state)
  * Based on a similar function from
  * postgres/src/backend/replication/logical/worker.c.
  *
- * Executor state preparation for evaluation of constraint expressions,
- * indexes and triggers.
+ * Executor state preparation for evaluation of constraint expressions
+ * and indexes.
  *
  * This is based on similar code in copy.c
  */
@@ -1130,9 +1199,6 @@ create_estate_for_relation(Relation rel)
 		estate->es_trig_tuple_slot = ExecInitExtraTupleSlot(estate, NULL);
 	}
 #endif
-
-	/* Prepare to catch AFTER triggers. */
-	AfterTriggerBeginQuery();
 
 	return estate;
 }
