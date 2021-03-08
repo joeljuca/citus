@@ -105,3 +105,26 @@ ROLLBACK;
 SELECT COUNT(*)=1 FROM pg_class WHERE relname='columnar_temp';
 -- show that we preserve the stripe of the temp columanar table after rollback
 SELECT COUNT(*)=1 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
+
+-- drop it for next tests
+DROP TABLE columnar_temp;
+
+BEGIN;
+  CREATE TEMPORARY TABLE columnar_temp(i int) USING columnar ON COMMIT DROP;
+  INSERT INTO columnar_temp SELECT i FROM generate_series(1,5) i;
+COMMIT;
+
+-- make sure that table & it's stripe is dropped after commiting above xact
+SELECT COUNT(*)=0 FROM pg_class WHERE relname='columnar_temp';
+SELECT COUNT(*)=0 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
+
+BEGIN;
+  CREATE TEMPORARY TABLE columnar_temp(i int) USING columnar ON COMMIT DELETE ROWS;
+  INSERT INTO columnar_temp SELECT i FROM generate_series(1,5) i;
+COMMIT;
+
+-- make sure that table is not dropped but it's rows's are deleted after commiting above xact
+SELECT COUNT(*)=1 FROM pg_class WHERE relname='columnar_temp';
+SELECT COUNT(*)=0 FROM columnar_temp;
+-- since we deleted all the rows, we shouldn't have any stripes for table
+SELECT COUNT(*)=0 FROM (TABLE columnar.stripe EXCEPT TABLE old_columnar_stripe) AS new_columnar_stripe_rows;
