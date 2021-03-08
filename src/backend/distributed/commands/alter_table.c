@@ -1666,8 +1666,8 @@ SwitchToSequentialAndLocalExecutionIfRelationNameTooLong(Oid relationId,
 		}
 		else
 		{
-			longestPartitionShardName = GetLongestShardName(relationId,
-															longestPartitionName);
+			longestPartitionShardName =
+				GetLongestHypotheticalShardName(longestPartitionName);
 		}
 
 		SwitchToSequentialAndLocalExecutionIfShardNameTooLong(longestPartitionName,

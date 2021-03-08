@@ -12,6 +12,7 @@
 #include "postgres.h"
 
 #include "utils/lsyscache.h"
+#include "distributed/coordinator_protocol.h"
 #include "distributed/metadata_utility.h"
 #include "distributed/relay_utility.h"
 #include "distributed/shard_utils.h"
@@ -52,6 +53,24 @@ GetLongestShardName(Oid citusTableOid, char *finalRelationName)
 	char *longestShardName = pstrdup(finalRelationName);
 	ShardInterval *shardInterval = LoadShardIntervalWithLongestShardName(citusTableOid);
 	AppendShardIdToName(&longestShardName, shardInterval->shardId);
+
+	return longestShardName;
+}
+
+
+/*
+ * GetLongestShardName is a utility function that creates a hypothetical shard
+ * name for a table that is not distributed yet.
+ *
+ * Note that this operation will increment the shard id seqeunce without
+ * actually using the shard id in an actual shard.
+ */
+char *
+GetLongestHypotheticalShardName(char *relationName)
+{
+	char *longestShardName = pstrdup(relationName);
+	uint newShardId = GetNextShardId();
+	AppendShardIdToName(&longestShardName, newShardId);
 
 	return longestShardName;
 }

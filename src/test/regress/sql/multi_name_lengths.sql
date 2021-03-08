@@ -204,8 +204,19 @@ SELECT master_create_distributed_table('sneaky_name_lengths', 'int_col_123456789
 SELECT master_create_worker_shards('sneaky_name_lengths', '2', '2');
 
 \c - - :public_worker_1_host :worker_1_port
-\di public.sneaky*225022
-SELECT "Constraint", "Definition" FROM table_checks WHERE relid='public.sneaky_name_lengths_225022'::regclass ORDER BY 1 DESC, 2 DESC;
+SELECT c1.relname AS sneaky_index_name,
+       c2.oid AS sneaky_shard_oid
+FROM pg_class c1
+    JOIN pg_index i ON i.indexrelid = c1.oid
+    JOIN pg_class c2 ON i.indrelid = c2.oid
+WHERE c1.relname LIKE 'sneaky_name_lengths_int_col_%'
+    AND c2.relname LIKE 'sneaky_name_lengths_%'
+    AND c1.relkind = 'i'
+ORDER BY 1 ASC, 2 ASC
+LIMIT 1 \gset
+
+\di :sneaky_index_name
+SELECT "Constraint", "Definition" FROM table_checks WHERE relid= :sneaky_shard_oid ORDER BY 1 DESC, 2 DESC;
 \c - - :master_host :master_port
 
 SET citus.shard_count TO 2;

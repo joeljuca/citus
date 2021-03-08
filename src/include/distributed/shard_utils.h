@@ -15,5 +15,5 @@
 
 extern Oid GetTableLocalShardOid(Oid citusTableOid, uint64 shardId);
 extern char * GetLongestShardName(Oid citusTableOid, char *finalRelationName);
-
+extern char * GetLongestHypotheticalShardName(char *relationName);
 #endif /* SHARD_UTILS_H */
