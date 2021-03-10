@@ -98,7 +98,7 @@ MemoryContext CommitContext = NULL;
  * CoordinatedTransactionUse2PC(), e.g. if DDL was issued and
  * MultiShardCommitProtocol was set to 2PC.
  */
-bool CoordinatedTransactionUses2PC = false;
+bool CoordinatedTransactionShouldUse2PCFlag = false;
 
 /* if disabled, distributed statements in a function may run as separate transactions */
 bool FunctionOpensTransactionBlock = true;
@@ -183,26 +183,29 @@ InCoordinatedTransaction(void)
 
 
 /*
- * CoordinatedTransactionUse2PC() signals that the current coordinated
+ * CoordinatedTransactionShouldUse2PC() signals that the current coordinated
  * transaction should use 2PC to commit.
+ *
+ * Note that even if 2PC is enabled, it is only used for connections that make
+ * modification (DML or DDL).
  */
 void
-CoordinatedTransactionUse2PC(void)
+CoordinatedTransactionShouldUse2PC(void)
 {
 	Assert(InCoordinatedTransaction());
 
-	CoordinatedTransactionUses2PC = true;
+	CoordinatedTransactionShouldUse2PCFlag = true;
 }
 
 
 /*
- * GetCoordinatedTransactionUses2PC is a wrapper function to read the value
- * of CoordinatedTransactionUses2PC.
+ * GetCoordinatedTransactionShouldUse2PC is a wrapper function to read the value
+ * of CoordinatedTransactionShouldUse2PCFlag.
  */
 bool
-GetCoordinatedTransactionUses2PC(void)
+GetCoordinatedTransactionShouldUse2PC(void)
 {
-	return CoordinatedTransactionUses2PC;
+	return CoordinatedTransactionShouldUse2PCFlag;
 }
 
 
@@ -436,7 +439,7 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 			 */
 			MarkFailedShardPlacements();
 
-			if (CoordinatedTransactionUses2PC)
+			if (CoordinatedTransactionShouldUse2PCFlag)
 			{
 				CoordinatedRemoteTransactionsPrepare();
 				CurrentCoordinatedTransactionState = COORD_TRANS_PREPARED;
@@ -464,7 +467,7 @@ CoordinatedTransactionCallback(XactEvent event, void *arg)
 			 * Check again whether shards/placement successfully
 			 * committed. This handles failure at COMMIT/PREPARE time.
 			 */
-			PostCommitMarkFailedShardPlacements(CoordinatedTransactionUses2PC);
+			PostCommitMarkFailedShardPlacements(CoordinatedTransactionShouldUse2PCFlag);
 			break;
 		}
 
@@ -496,7 +499,7 @@ ResetGlobalVariables()
 	FreeSavedExplainPlan();
 	dlist_init(&InProgressTransactions);
 	activeSetStmts = NULL;
-	CoordinatedTransactionUses2PC = false;
+	CoordinatedTransactionShouldUse2PCFlag = false;
 	TransactionModifiedNodeMetadata = false;
 	MetadataSyncOnCommit = false;
 	ResetWorkerErrorIndication();

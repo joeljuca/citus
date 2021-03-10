@@ -74,5 +74,5 @@ coordinated_transaction_uses_2PC(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("The transaction is not a coordinated transaction")));
 	}
 
-	PG_RETURN_BOOL(GetCoordinatedTransactionUses2PC());
+	PG_RETURN_BOOL(GetCoordinatedTransactionShouldUse2PC());
 }
